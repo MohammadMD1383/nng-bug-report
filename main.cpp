@@ -7,19 +7,32 @@ using namespace std;
 using namespace NNG;
 
 void client() {
-	const auto client = ReqRep::Client::New().takeOwnership();
-	client.dial("ipc://x").ignore();
+	const auto client = ReqRep::Client::New();
+	if (!client) {
+		cerr << "Failed to create client: " << client.err() << endl;
+		return;
+	}
+
+	if (const auto r = client.get().dial("ipc://x"); !r) {
+		cerr << "Failed to dial server: " << r.err() << endl;
+		return;
+	}
 
 	vector<jthread> threads;
 
 	for (int t = 0; t < 50; t++) {
-		threads.emplace_back([&client] {
+		threads.emplace_back([&client = client.get()] {
 			for (int i = 0; i < 1000; ++i) {
 				srand(time(nullptr));
 				const auto message = to_string(rand());
-				const auto response = client.requestInParallel(message).takeOwnership();
-				if (response != message) {
-					cerr << "got bad response; expected: " << message << " actual: " << response << endl;
+				const auto response = client.requestInParallel(message);
+				if (!response) {
+					cerr << "Failed sending request/getting response: " << response.err() << endl;
+					continue;
+				}
+
+				if (response.get() != message) {
+					cerr << "got bad response; expected: " << message << " actual: " << response.get() << endl;
 				} else {
 					cout << "ok" << endl;
 				}
@@ -32,14 +45,28 @@ void client() {
 	}
 }
 
-[[noreturn]]
 void server() {
-	const auto server = ReqRep::Server::New().takeOwnership();
-	server.listen("ipc://x").ignore();
+	const auto server = ReqRep::Server::New();
+	if (!server) {
+		cerr << "Failed to create server: " << server.err() << endl;
+		return;
+	}
+
+	if (const auto r = server.get().listen("ipc://x"); !r) {
+		cerr << "Failed to listen: " << r.err() << endl;
+		return;
+	}
 
 	while (true) {
-		const auto request = server.receiveInParallel().takeOwnership();
-		request.reply(request.message()).ignore();
+		const auto request = server.get().receiveInParallel();
+		if (!request) {
+			cerr << "Failed to receive request: " << request.err() << endl;
+			continue;
+		}
+
+		if (const auto r = request.get().reply(request.get().message()); !r) {
+			cerr << "Failed to send response: " << r.err() << endl;
+		}
 	}
 }
 
